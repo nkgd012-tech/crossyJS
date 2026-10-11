@@ -1,1894 +1,614 @@
-'use strict';
 
-/*
- * ============================================================
- * CROSSY JS
- * Crossy Road style game cho GB300 / mQuickJS
- *
- * Độ phân giải: 320x240
- *
- * UP    = đi lên
- * DOWN  = đi xuống
- * LEFT  = sang trái
- * RIGHT = sang phải
- * A     = bắt đầu / chơi lại
- * START = pause
- * B     = về menu
- * SELECT = thoát game
- * ============================================================
- */
+"use strict";
 
+// Crossy Road - GB300 / mQuickJS
+// 320x240 - ScreenDraw API
 
-/* ============================================================
-   1. CẤU HÌNH
-   ============================================================ */
-
-var SW = 320;
-var SH = 240;
-var RUNNING = true;
-
-
-/* ============================================================
-   2. INPUT GB300
-   ============================================================ */
-
-var BTN_B = 1;
-var BTN_Y = 2;
-var BTN_SELECT = 4;
-var BTN_START = 8;
+var W = 320, H = 240, TILE = 20;
 
 var BTN_UP = 16;
 var BTN_DOWN = 32;
 var BTN_LEFT = 64;
 var BTN_RIGHT = 128;
-
 var BTN_A = 256;
-var BTN_X = 512;
-var BTN_L = 1024;
-var BTN_R = 2048;
 
-
-/* ============================================================
-   3. TRẠNG THÁI GAME
-   ============================================================ */
-
-var STATE_MENU = 0;
-var STATE_GAME = 1;
-var STATE_PAUSE = 2;
-var STATE_OVER = 3;
-
-var state = STATE_MENU;
-
-var score = 0;
-var bestScore = 0;
-
-var gameTime = 0;
-var moveCooldown = 0;
-
-var lastInput = 0;
-
-var cameraRow = 0;
-
-
-/* ============================================================
-   4. PLAYER
-   ============================================================ */
-
-var player = {
-
-    x: 0,
-    targetX: 0,
-
-    row: 0,
-
-    jump: 0,
-
-    jumpTime: 0,
-
-    alive: true,
-
-    update: function(dt) {
-
-        if (this.x < this.targetX)
-            this.x += 7 * dt;
-
-        if (this.x > this.targetX)
-            this.x -= 7 * dt;
-
-        if (Math.abs(this.x - this.targetX) < 0.03)
-            this.x = this.targetX;
-
-        if (this.jump > 0) {
-
-            this.jumpTime += dt;
-
-            if (this.jumpTime >= 0.20) {
-
-                this.jump = 0;
-                this.jumpTime = 0;
-            }
-        }
-    },
-
-    draw: function() {
-
-        var px =
-            160 +
-            this.x * 42;
-
-        var py = 165;
-
-        /*
-         * Nhảy giả 3D
-         */
-
-        if (this.jump > 0) {
-
-            var t =
-                this.jumpTime / 0.20;
-
-            py -=
-                Math.sin(t * Math.PI) * 24;
-        }
-
-        px = px | 0;
-        py = py | 0;
-
-
-        /*
-         * Bóng
-         */
-
-        ScreenDraw.fillRect(
-            px - 11,
-            py + 2,
-            22,
-            5,
-            0x55333333
-        );
-
-
-        /*
-         * Thân
-         */
-
-        ScreenDraw.fillRect(
-            px - 10,
-            py - 20,
-            20,
-            20,
-            0xFFFFD34D
-        );
-
-
-        /*
-         * Mặt 3D phía trên
-         */
-
-        ScreenDraw.fillRect(
-            px - 7,
-            py - 23,
-            14,
-            4,
-            0xFFFFE889
-        );
-
-
-        /*
-         * Mặt bên
-         */
-
-        ScreenDraw.fillRect(
-            px + 7,
-            py - 18,
-            3,
-            17,
-            0xFFD49D18
-        );
-
-
-        /*
-         * Mắt
-         */
-
-        ScreenDraw.fillRect(
-            px - 6,
-            py - 15,
-            4,
-            5,
-            0xFF202020
-        );
-
-        ScreenDraw.fillRect(
-            px + 2,
-            py - 15,
-            4,
-            5,
-            0xFF202020
-        );
-
-
-        /*
-         * Mỏ
-         */
-
-        ScreenDraw.fillRect(
-            px - 2,
-            py - 9,
-            5,
-            3,
-            0xFFFF8C21
-        );
-    }
+var C = {
+    grass: 0xFF83CF70,
+    grass2: 0xFF76C263,
+    road: 0xFF515761,
+    line: 0xFFE8DDB2,
+    water: 0xFF42A6D9,
+    water2: 0xFF69C5EB,
+    log: 0xFF9B6337,
+    logLight: 0xFFC18A51,
+    tree: 0xFF27834B,
+    treeLight: 0xFF46AB60,
+    trunk: 0xFF79502F,
+    white: 0xFFFFFFFF,
+    black: 0xFF20252B,
+    yellow: 0xFFFFD34F,
+    orange: 0xFFFFA52E,
+    red: 0xFFE94D53,
+    blue: 0xFF5597EC
 };
 
-
-/* ============================================================
-   5. WORLD ROW
-   ============================================================ */
-
 var rows = [];
+var player;
+var score = 0;
+var best = 0;
+var maxProgress = 0;
+var gameOver = false;
+var frame = 0;
+var camera = 0;
+var previousButtons = 0;
+var moveCooldown = 0;
+var lastTime = Date.now();
 
+function randomInt(a, b) {
+    return Math.floor(Math.random() * (b - a + 1)) + a;
+}
 
-function createRow(index) {
+function randomChoice(a) {
+    return a[randomInt(0, a.length - 1)];
+}
 
-    var type;
+function rect(x, y, w, h, color) {
+    x = Math.floor(x);
+    y = Math.floor(y);
+    w = Math.floor(w);
+    h = Math.floor(h);
 
-    /*
-     * Cứ vài hàng tạo các loại địa hình khác nhau
-     */
+    if (w <= 0 || h <= 0) return;
+    ScreenDraw.fillRect(x, y, w, h, color);
+}
 
-    var randomValue =
-        Math.random();
+function text(x, y, value, color) {
+    ScreenDraw.text8x8(
+        Math.floor(x),
+        Math.floor(y),
+        String(value),
+        color
+    );
+}
 
-    if (index < 2) {
+function newPlayer() {
+    return {
+        x: 160,
+        y: 190,
+        fromX: 160,
+        fromY: 190,
+        toX: 160,
+        toY: 190,
+        jumping: false,
+        jump: 0,
+        jumpLength: 100,
+        alive: true
+    };
+}
 
-        type = 0;
-
-    } else if (randomValue < 0.45) {
-
-        type = 0;
-
-    } else if (randomValue < 0.75) {
-
-        type = 1;
-
-    } else {
-
-        type = 2;
-    }
-
+function makeRow(y, forcedType) {
+    var type = forcedType || randomChoice([
+        "grass", "grass", "grass",
+        "road", "road", "water"
+    ]);
 
     var row = {
-
-        index: index,
-
+        y: y,
         type: type,
-
-        speed:
-            (0.5 + Math.random() * 0.8),
-
-        direction:
-            Math.random() < 0.5 ? -1 : 1,
-
-        objects: []
+        objects: [],
+        speed: randomChoice([-1, 1]) *
+            (0.35 + Math.random() * 0.65),
+        offset: randomInt(0, 40)
     };
 
+    if (type === "road") {
+        row.speed *= 1.6;
 
-    /*
-     * ROAD
-     */
-
-    if (type === 1) {
-
-        var amount =
-            1 + Math.floor(
-                Math.random() * 3
-            );
-
-        for (var i = 0; i < amount; i++) {
-
+        for (var i = 0; i < 2; i++) {
             row.objects.push({
-
-                x:
-                    -2.8 +
-                    Math.random() * 5.6,
-
-                width:
-                    0.65 +
-                    Math.random() * 0.35,
-
-                color:
-                    Math.floor(
-                        Math.random() * 5
-                    )
+                x: randomInt(-100, W),
+                w: randomInt(23, 34),
+                color: randomChoice([
+                    C.red, C.yellow, C.blue, C.white
+                ])
             });
         }
     }
 
-
-    /*
-     * WATER
-     */
-
-    if (type === 2) {
-
-        var logAmount =
-            1 +
-            Math.floor(
-                Math.random() * 3
-            );
-
-        for (
-            var j = 0;
-            j < logAmount;
-            j++
-        ) {
-
+    if (type === "water") {
+        for (var j = 0; j < 3; j++) {
             row.objects.push({
-
-                x:
-                    -2.8 +
-                    Math.random() * 5.6,
-
-                width:
-                    0.9 +
-                    Math.random() * 0.9
+                x: j * 112 + randomInt(-10, 10),
+                w: randomInt(43, 65)
             });
         }
     }
 
-
-    /*
-     * GRASS
-     */
-
-    if (type === 0) {
-
-        var treeAmount =
-            Math.floor(
-                Math.random() * 3
-            );
-
-        for (
-            var k = 0;
-            k < treeAmount;
-            k++
-        ) {
-
-            row.objects.push({
-
-                x:
-                    -2.8 +
-                    Math.random() * 5.6
-            });
+    if (type === "grass") {
+        for (var k = 0; k < 5; k++) {
+            if (Math.random() < 0.38) {
+                row.objects.push({
+                    x: randomInt(8, W - 8),
+                    size: randomInt(8, 12)
+                });
+            }
         }
     }
-
 
     return row;
 }
 
-
-/* ============================================================
-   6. TẠO MAP
-   ============================================================ */
-
-function generateWorld() {
-
+function resetGame() {
     rows = [];
 
-    for (
-        var i = -8;
-        i < 45;
-        i++
-    ) {
+    rows.push(makeRow(190, "grass"));
+    rows.push(makeRow(170, "grass"));
+    rows.push(makeRow(150, "grass"));
+    rows.push(makeRow(130, "grass"));
+    rows.push(makeRow(110, "grass"));
 
-        rows.push(
-            createRow(i)
+    for (var y = 90; y >= -180; y -= TILE) {
+        rows.push(makeRow(y));
+    }
+
+    player = newPlayer();
+    score = 0;
+    maxProgress = 0;
+    camera = 0;
+    frame = 0;
+    gameOver = false;
+    moveCooldown = 0;
+    previousButtons = 0;
+}
+
+function rowAt(y) {
+    for (var i = 0; i < rows.length; i++) {
+        if (y >= rows[i].y && y < rows[i].y + TILE) {
+            return rows[i];
+        }
+    }
+    return null;
+}
+
+// Hitbox cây: chặn di chuyển, không gây chết.
+function blockedByTree(nx, ny) {
+    var row = rowAt(ny);
+
+    if (!row || row.type !== "grass") return false;
+
+    for (var i = 0; i < row.objects.length; i++) {
+        var tree = row.objects[i];
+
+        // Thân cây rộng 10 pixel.
+        var left = tree.x - 5;
+        var right = tree.x + 5;
+
+        // Hitbox gà rộng khoảng 10 pixel.
+        if (nx + 5 > left && nx - 5 < right) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function beginMove(dx, dy) {
+    if (gameOver || player.jumping) return;
+
+    var nx = player.x + dx * TILE;
+    var ny = player.y + dy * TILE;
+
+    if (nx < 10 || nx > W - 10) return;
+
+    // Không cho gà đi xuyên qua thân cây.
+    if (blockedByTree(nx, ny)) return;
+
+    player.fromX = player.x;
+    player.fromY = player.y;
+    player.toX = nx;
+    player.toY = ny;
+    player.jump = 0;
+    player.jumping = true;
+
+    if (ny < 85) {
+        var shift = 85 - ny;
+
+        player.toY += shift;
+        camera += shift;
+
+        for (var j = 0; j < rows.length; j++) {
+            rows[j].y += shift;
+        }
+    }
+}
+
+function inputUpdate() {
+    if (typeof getInputState !== "function") return;
+
+    var buttons = getInputState() || 0;
+    var pressed = buttons & ~previousButtons;
+    previousButtons = buttons;
+
+    if (moveCooldown > 0) return;
+
+    if (gameOver) {
+        if (pressed & (
+            BTN_UP | BTN_DOWN |
+            BTN_LEFT | BTN_RIGHT | BTN_A
+        )) {
+            resetGame();
+        }
+        return;
+    }
+
+    if (pressed & BTN_UP) {
+        beginMove(0, -1);
+        moveCooldown = 5;
+    } else if (pressed & BTN_DOWN) {
+        beginMove(0, 1);
+        moveCooldown = 5;
+    } else if (pressed & BTN_LEFT) {
+        beginMove(-1, 0);
+        moveCooldown = 5;
+    } else if (pressed & BTN_RIGHT) {
+        beginMove(1, 0);
+        moveCooldown = 5;
+    } else if (pressed & BTN_A) {
+        beginMove(0, -1);
+        moveCooldown = 5;
+    }
+}
+
+function updatePlayer(dt) {
+    if (!player.jumping) return;
+
+    player.jump += dt;
+
+    var t = player.jump / player.jumpLength;
+    if (t >= 1) t = 1;
+
+    var smooth = t * t * (3 - 2 * t);
+
+    player.x = player.fromX +
+        (player.toX - player.fromX) * smooth;
+
+    player.y = player.fromY +
+        (player.toY - player.fromY) * smooth;
+
+    if (t >= 1) {
+        player.x = player.toX;
+        player.y = player.toY;
+        player.jumping = false;
+
+        // Tính điểm bằng tiến trình thật, không dùng
+        // tọa độ camera làm nguồn điểm trực tiếp.
+        var progress = Math.floor(
+            (190 + camera - player.y) / TILE
+        );
+
+        if (progress > maxProgress) {
+            score += progress - maxProgress;
+            maxProgress = progress;
+        }
+    }
+}
+
+function updateObjects(dt) {
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i];
+
+        if (row.type !== "road" && row.type !== "water") {
+            continue;
+        }
+
+        for (var j = 0; j < row.objects.length; j++) {
+            var obj = row.objects[j];
+
+            obj.x += row.speed * dt * 0.055;
+
+            if (row.speed > 0 && obj.x > W + 10) {
+                obj.x = -obj.w - randomInt(10, 55);
+            }
+
+            if (row.speed < 0 && obj.x + obj.w < -10) {
+                obj.x = W + randomInt(10, 55);
+            }
+        }
+    }
+}
+
+function checkCollision(dt) {
+    if (gameOver || player.jumping) return;
+
+    var row = rowAt(player.y + 1);
+    if (!row) return;
+
+    var px = player.x;
+    var py = player.y;
+
+    if (row.type === "road") {
+        for (var i = 0; i < row.objects.length; i++) {
+            var car = row.objects[i];
+
+            var hitX =
+                px + 4 > car.x + 2 &&
+                px - 4 < car.x + car.w - 2;
+
+            var hitY =
+                py + 5 > row.y + 2 &&
+                py - 5 < row.y + TILE - 2;
+
+            if (hitX && hitY) {
+                gameOver = true;
+                player.alive = false;
+                return;
+            }
+        }
+    }
+
+    if (row.type === "water") {
+        var foundLog = null;
+
+        for (var j = 0; j < row.objects.length; j++) {
+            var log = row.objects[j];
+
+            if (px + 5 > log.x &&
+                px - 5 < log.x + log.w) {
+                foundLog = log;
+                break;
+            }
+        }
+
+        if (!foundLog) {
+            gameOver = true;
+            player.alive = false;
+            return;
+        }
+
+        // Gà trôi cùng khúc gỗ.
+        player.x += row.speed * dt * 0.055;
+
+        if (player.x < -5 || player.x > W + 5) {
+            gameOver = true;
+            player.alive = false;
+        }
+    }
+
+    // Cây không được xử lý như va chạm chết.
+}
+
+function updateWorld() {
+    var highest = 99999;
+
+    for (var i = 0; i < rows.length; i++) {
+        if (rows[i].y < highest) highest = rows[i].y;
+    }
+
+    while (highest > -TILE) {
+        highest -= TILE;
+        rows.unshift(makeRow(highest));
+    }
+
+    for (var j = rows.length - 1; j >= 0; j--) {
+        if (rows[j].y > H + TILE) {
+            rows.splice(j, 1);
+        }
+    }
+}
+
+function update(dt) {
+    frame++;
+
+    if (dt > 50) dt = 50;
+    if (dt < 0) dt = 0;
+
+    if (moveCooldown > 0) moveCooldown--;
+
+    inputUpdate();
+
+    if (!gameOver) {
+        updatePlayer(dt);
+        updateObjects(dt);
+        checkCollision(dt);
+        updateWorld();
+    }
+}
+
+// ---------------- DRAWING ----------------
+
+function drawTree(x, y, size) {
+    rect(x - 2, y + 3, 5, 9, C.trunk);
+
+    rect(
+        x - size / 2,
+        y - size / 2,
+        size,
+        size,
+        C.tree
+    );
+
+    rect(
+        x - size / 2 + 3,
+        y - size / 2 - 3,
+        size - 5,
+        size - 3,
+        C.treeLight
+    );
+
+    rect(x - 2, y - size / 2 - 5, 5, 5, C.treeLight);
+}
+
+function drawGrass(row) {
+    var base = Math.floor(row.y / TILE) % 2 === 0
+        ? C.grass : C.grass2;
+
+    rect(0, row.y, W, TILE, base);
+
+    // Cỏ nhỏ trang trí.
+    for (var x = row.offset; x < W; x += 37) {
+        rect(x, row.y + 4, 3, 2, 0x557FFFFFF);
+        rect(x + 5, row.y + 8, 2, 2, 0x557FFFFFF);
+    }
+
+    for (var i = 0; i < row.objects.length; i++) {
+        var tree = row.objects[i];
+        drawTree(tree.x, row.y + 9, tree.size);
+    }
+}
+
+function drawRoad(row) {
+    rect(0, row.y, W, TILE, C.road);
+
+    for (var x = 0; x < W; x += 40) {
+        rect(x + 4, row.y + 9, 20, 2, C.line);
+    }
+
+    for (var i = 0; i < row.objects.length; i++) {
+        var car = row.objects[i];
+        var x1 = car.x;
+
+        rect(x1 + 4, row.y + 14, 6, 4, C.black);
+        rect(x1 + car.w - 10, row.y + 14, 6, 4, C.black);
+
+        rect(x1, row.y + 5, car.w, 11, car.color);
+        rect(x1 + 5, row.y + 3, car.w - 10, 7, car.color);
+
+        rect(x1 + 7, row.y + 5, 6, 4, 0xFFBDEBFF);
+        rect(
+            x1 + car.w - 13,
+            row.y + 5,
+            6,
+            4,
+            0xFFBDEBFF
+        );
+
+        rect(x1 + car.w - 2, row.y + 9, 2, 3, C.yellow);
+    }
+}
+
+function drawWater(row) {
+    rect(0, row.y, W, TILE, C.water);
+
+    for (var x = 0; x < W; x += 35) {
+        var rippleX = (x + frame * 0.3) % W;
+
+        rect(rippleX, row.y + 3, 8, 2, C.water2);
+        rect((rippleX + 17) % W, row.y + 15, 6, 2, C.water2);
+    }
+
+    for (var i = 0; i < row.objects.length; i++) {
+        var log = row.objects[i];
+
+        rect(log.x, row.y + 5, log.w, 12, C.log);
+        rect(log.x + 3, row.y + 6, log.w - 6, 3, C.logLight);
+        rect(log.x + 5, row.y + 12, log.w - 10, 2, C.trunk);
+
+        rect(log.x + 2, row.y + 6, 2, 9, C.logLight);
+        rect(
+            log.x + log.w - 4,
+            row.y + 6,
+            2,
+            9,
+            C.logLight
         );
     }
 }
 
+function drawChicken(x, y) {
+    // Bóng gà.
+    rect(x - 6, y + 6, 12, 3, 0x55000000);
 
-/* ============================================================
-   7. LẤY ROW
-   ============================================================ */
+    // Chân.
+    rect(x - 4, y + 5, 2, 4, C.orange);
+    rect(x + 2, y + 5, 2, 4, C.orange);
+    rect(x - 6, y + 8, 5, 2, C.orange);
+    rect(x + 1, y + 8, 5, 2, C.orange);
 
-function getRow(number) {
+    // Thân.
+    rect(x - 6, y - 5, 12, 12, 0xFFFFFAEE);
+    rect(x - 4, y - 7, 9, 3, C.white);
+    rect(x - 7, y - 3, 3, 7, C.white);
 
-    var index =
-        number + 8;
+    // Cánh.
+    rect(x - 5, y, 4, 4, 0xFFEADCC5);
 
-    if (
-        index < 0 ||
-        index >= rows.length
-    ) {
+    // Mào.
+    rect(x - 3, y - 10, 3, 4, C.red);
+    rect(x, y - 12, 3, 6, C.red);
+    rect(x + 3, y - 9, 2, 3, C.red);
 
-        return null;
-    }
+    // Mỏ.
+    rect(x + 5, y - 2, 5, 3, C.orange);
+    rect(x + 7, y + 1, 3, 2, C.orange);
 
-    return rows[index];
+    // Mắt.
+    rect(x + 2, y - 4, 2, 3, C.black);
+    rect(x + 3, y - 4, 1, 1, C.white);
 }
 
-
-/* ============================================================
-   8. RESET GAME
-   ============================================================ */
-
-function resetGame() {
-
-    score = 0;
-
-    gameTime = 0;
-
-    moveCooldown = 0;
-
-    cameraRow = 0;
-
-    player.x = 0;
-    player.targetX = 0;
-    player.row = 0;
-
-    player.jump = 0;
-    player.jumpTime = 0;
-
-    player.alive = true;
-
-    generateWorld();
-
-    state = STATE_GAME;
+function drawHUD() {
+    rect(5, 5, 70, 19, 0xDDFFFFFF);
+    text(10, 10, "Score: " + score, C.black);
 }
-
-
-/* ============================================================
-   9. DI CHUYỂN
-   ============================================================ */
-
-function movePlayer(dx, dy) {
-
-    if (moveCooldown > 0)
-        return;
-
-    if (!player.alive)
-        return;
-
-
-    /*
-     * Trái / phải
-     */
-
-    if (dx !== 0) {
-
-        player.targetX += dx;
-
-        if (player.targetX < -2)
-            player.targetX = -2;
-
-        if (player.targetX > 2)
-            player.targetX = 2;
-    }
-
-
-    /*
-     * Lên / xuống
-     */
-
-    if (dy !== 0) {
-
-        player.row += dy;
-
-        if (player.row < 0)
-            player.row = 0;
-
-        if (player.row > 35)
-            player.row = 35;
-
-
-        /*
-         * Chỉ tăng điểm khi đi lên
-         */
-
-        if (dy > 0) {
-
-            score++;
-
-            if (score > bestScore)
-                bestScore = score;
-        }
-    }
-
-
-    /*
-     * Animation nhảy
-     */
-
-    player.jump = 1;
-    player.jumpTime = 0;
-
-    moveCooldown = 0.10;
-
-
-    /*
-     * Camera đi theo player
-     */
-
-    if (
-        player.row >
-        cameraRow + 5
-    ) {
-
-        cameraRow =
-            player.row - 5;
-    }
-}
-
-
-/* ============================================================
-   10. UPDATE XE / LOG
-   ============================================================ */
-
-function updateRows(dt) {
-
-    for (
-        var i = 0;
-        i < rows.length;
-        i++
-    ) {
-
-        var row = rows[i];
-
-        if (
-            row.type !== 1 &&
-            row.type !== 2
-        ) {
-
-            continue;
-        }
-
-
-        for (
-            var j = 0;
-            j < row.objects.length;
-            j++
-        ) {
-
-            var object =
-                row.objects[j];
-
-
-            object.x +=
-                row.speed *
-                row.direction *
-                dt;
-
-
-            if (object.x < -3.5)
-                object.x = 3.5;
-
-            if (object.x > 3.5)
-                object.x = -3.5;
-        }
-    }
-}
-
-
-/* ============================================================
-   11. KIỂM TRA XE
-   ============================================================ */
-
-function checkCarCollision(row) {
-
-    if (!row)
-        return false;
-
-    if (row.type !== 1)
-        return false;
-
-
-    for (
-        var i = 0;
-        i < row.objects.length;
-        i++
-    ) {
-
-        var car =
-            row.objects[i];
-
-
-        if (
-            Math.abs(
-                car.x - player.x
-            )
-            <
-            car.width * 0.55 +
-            0.28
-        ) {
-
-            return true;
-        }
-    }
-
-
-    return false;
-}
-
-
-/* ============================================================
-   12. KIỂM TRA LOG
-   ============================================================ */
-
-function checkLog(row) {
-
-    if (!row)
-        return false;
-
-    if (row.type !== 2)
-        return true;
-
-
-    for (
-        var i = 0;
-        i < row.objects.length;
-        i++
-    ) {
-
-        var log =
-            row.objects[i];
-
-
-        if (
-            Math.abs(
-                log.x - player.x
-            )
-            <
-            log.width * 0.55 +
-            0.20
-        ) {
-
-            return true;
-        }
-    }
-
-
-    return false;
-}
-
-
-/* ============================================================
-   13. GAME OVER
-   ============================================================ */
-
-function killPlayer() {
-
-    player.alive = false;
-
-    state = STATE_OVER;
-}
-
-
-/* ============================================================
-   14. COLLISION UPDATE
-   ============================================================ */
-
-function checkWorldCollision() {
-
-    /*
-     * Khi đang nhảy không kiểm tra
-     */
-
-    if (player.jump > 0)
-        return;
-
-
-    var row =
-        getRow(player.row);
-
-
-    if (!row)
-        return;
-
-
-    /*
-     * Đường
-     */
-
-    if (row.type === 1) {
-
-        if (
-            checkCarCollision(row)
-        ) {
-
-            killPlayer();
-
-            return;
-        }
-    }
-
-
-    /*
-     * Nước
-     */
-
-    if (row.type === 2) {
-
-        if (
-            !checkLog(row)
-        ) {
-
-            killPlayer();
-
-            return;
-        }
-    }
-}
-
-
-/* ============================================================
-   15. VẼ CÂY
-   ============================================================ */
-
-function drawTree(x, y, scale) {
-
-    var s =
-        (scale * 15) | 0;
-
-
-    /*
-     * Bóng
-     */
-
-    ScreenDraw.fillRect(
-        x - s,
-        y,
-        s * 2,
-        4,
-        0x55333333
-    );
-
-
-    /*
-     * Thân
-     */
-
-    ScreenDraw.fillRect(
-        x - 3,
-        y - s,
-        6,
-        s,
-        0xFF7B4A27
-    );
-
-
-    /*
-     * Tán cây
-     */
-
-    ScreenDraw.fillRect(
-        x - s,
-        y - s * 2,
-        s * 2,
-        s,
-        0xFF218447
-    );
-
-    ScreenDraw.fillRect(
-        x - s + 4,
-        y - s * 2 - 5,
-        s * 2 - 8,
-        8,
-        0xFF36A653
-    );
-
-    ScreenDraw.fillRect(
-        x - 6,
-        y - s * 2 - 10,
-        12,
-        7,
-        0xFF55BB5E
-    );
-}
-
-
-/* ============================================================
-   16. VẼ XE
-   ============================================================ */
-
-function drawCar(x, y, scale, color) {
-
-    var s =
-        (scale * 16) | 0;
-
-
-    /*
-     * Bóng
-     */
-
-    ScreenDraw.fillRect(
-        x - s,
-        y,
-        s * 2,
-        4,
-        0x55333333
-    );
-
-
-    /*
-     * Bánh
-     */
-
-    ScreenDraw.fillRect(
-        x - s,
-        y - 5,
-        6,
-        9,
-        0xFF151515
-    );
-
-    ScreenDraw.fillRect(
-        x + s - 6,
-        y - 5,
-        6,
-        9,
-        0xFF151515
-    );
-
-
-    /*
-     * Thân xe
-     */
-
-    ScreenDraw.fillRect(
-        x - s,
-        y - 15,
-        s * 2,
-        12,
-        color
-    );
-
-
-    /*
-     * Cabin
-     */
-
-    ScreenDraw.fillRect(
-        x - s + 5,
-        y - 21,
-        s * 2 - 10,
-        8,
-        color
-    );
-
-
-    /*
-     * Kính
-     */
-
-    ScreenDraw.fillRect(
-        x - s + 8,
-        y - 19,
-        7,
-        5,
-        0xFF8ED4E7
-    );
-
-    ScreenDraw.fillRect(
-        x + 1,
-        y - 19,
-        7,
-        5,
-        0xFF8ED4E7
-    );
-
-
-    /*
-     * Đèn
-     */
-
-    ScreenDraw.fillRect(
-        x - s,
-        y - 12,
-        4,
-        4,
-        0xFFFFEE88
-    );
-
-    ScreenDraw.fillRect(
-        x + s - 4,
-        y - 12,
-        4,
-        4,
-        0xFFFF4444
-    );
-}
-
-
-/* ============================================================
-   17. VẼ KHÚC GỖ
-   ============================================================ */
-
-function drawLog(x, y, scale) {
-
-    var s =
-        (scale * 22) | 0;
-
-
-    ScreenDraw.fillRect(
-        x - s,
-        y - 6,
-        s * 2,
-        12,
-        0xFF754421
-    );
-
-
-    ScreenDraw.fillRect(
-        x - s + 3,
-        y - 4,
-        s * 2 - 6,
-        4,
-        0xFFA96938
-    );
-
-
-    /*
-     * Đầu gỗ
-     */
-
-    ScreenDraw.fillRect(
-        x - s,
-        y - 5,
-        5,
-        10,
-        0xFFB87B46
-    );
-
-    ScreenDraw.fillRect(
-        x + s - 5,
-        y - 5,
-        5,
-        10,
-        0xFFB87B46
-    );
-}
-
-
-/* ============================================================
-   18. VẼ WORLD
-   ============================================================ */
-
-function drawWorld() {
-
-    /*
-     * Bầu trời
-     */
-
-    ScreenDraw.fillRect(
-        0,
-        0,
-        SW,
-        100,
-        0xFF74C8E8
-    );
-
-
-    /*
-     * Núi xa
-     */
-
-    ScreenDraw.fillRect(
-        0,
-        90,
-        SW,
-        25,
-        0xFF72AC70
-    );
-
-
-    /*
-     * Các row
-     */
-
-    for (
-        var number = 38;
-        number >= -8;
-        number--
-    ) {
-
-        var row =
-            getRow(number);
-
-        if (!row)
-            continue;
-
-
-        var relative =
-            number - cameraRow;
-
-
-        var y =
-            166 -
-            relative * 13;
-
-
-        var scale =
-            1 -
-            relative * 0.055;
-
-
-        if (scale < 0.45)
-            scale = 0.45;
-
-        if (scale > 1.35)
-            scale = 1.35;
-
-
-        /*
-         * GRASS
-         */
-
-        if (row.type === 0) {
-
-            ScreenDraw.fillRect(
-                0,
-                y - 8,
-                SW,
-                17,
-                0xFF5FA74E
-            );
-
-
-            /*
-             * sọc cỏ
-             */
-
-            for (
-                var gx = 0;
-                gx < SW;
-                gx += 25
-            ) {
-
-                ScreenDraw.fillRect(
-                    gx,
-                    y + 3,
-                    8,
-                    2,
-                    0xFF73B85A
-                );
-            }
-        }
-
-
-        /*
-         * ROAD
-         */
-
-        if (row.type === 1) {
-
-            ScreenDraw.fillRect(
-                0,
-                y - 8,
-                SW,
-                17,
-                0xFF4B4F54
-            );
-
-
-            /*
-             * Mép đường
-             */
-
-            ScreenDraw.fillRect(
-                0,
-                y - 8,
-                SW,
-                2,
-                0xFF303337
-            );
-
-            ScreenDraw.fillRect(
-                0,
-                y + 6,
-                SW,
-                2,
-                0xFF303337
-            );
-
-
-            /*
-             * Vạch đường
-             */
-
-            for (
-                var rx = -30;
-                rx < SW + 30;
-                rx += 42
-            ) {
-
-                ScreenDraw.fillRect(
-                    rx,
-                    y - 1,
-                    22,
-                    2,
-                    0xFFE0C95A
-                );
-            }
-        }
-
-
-        /*
-         * WATER
-         */
-
-        if (row.type === 2) {
-
-            ScreenDraw.fillRect(
-                0,
-                y - 8,
-                SW,
-                17,
-                0xFF318DB7
-            );
-
-
-            /*
-             * Sóng
-             */
-
-            for (
-                var wx = 0;
-                wx < SW;
-                wx += 30
-            ) {
-
-                ScreenDraw.fillRect(
-                    wx,
-                    y - 4,
-                    12,
-                    2,
-                    0xFF5DC4DF
-                );
-
-                ScreenDraw.fillRect(
-                    wx + 10,
-                    y + 3,
-                    13,
-                    2,
-                    0xFF4EB5D2
-                );
-            }
-        }
-
-
-        /*
-         * OBJECTS
-         */
-
-        for (
-            var j = 0;
-            j < row.objects.length;
-            j++
-        ) {
-
-            var obj =
-                row.objects[j];
-
-
-            var ox =
-                (160 +
-                obj.x *
-                42 *
-                scale) | 0;
-
-
-            if (row.type === 0) {
-
-                drawTree(
-                    ox,
-                    y,
-                    scale
-                );
-            }
-
-
-            if (row.type === 1) {
-
-                var carColors = [
-
-                    0xFFE34B45,
-                    0xFFF2C94C,
-                    0xFF4D8FE8,
-                    0xFFE27D32,
-                    0xFFD95AA5
-
-                ];
-
-
-                drawCar(
-                    ox,
-                    y,
-                    scale,
-                    carColors[
-                        obj.color
-                    ]
-                );
-            }
-
-
-            if (row.type === 2) {
-
-                drawLog(
-                    ox,
-                    y,
-                    scale
-                );
-            }
-        }
-    }
-
-
-    /*
-     * Player
-     */
-
-    player.draw();
-
-
-    /*
-     * HUD
-     */
-
-    ScreenDraw.fillRect(
-        7,
-        7,
-        105,
-        28,
-        0xCC20252A
-    );
-
-
-    ScreenDraw.text8x8(
-        13,
-        12,
-        "SCORE " + score,
-        0xFFFFFFFF
-    );
-
-    ScreenDraw.text8x8(
-        13,
-        22,
-        "BEST " + bestScore,
-        0xFFFFD34D
-    );
-}
-
-
-/* ============================================================
-   19. MENU
-   ============================================================ */
-
-function drawMenu() {
-
-    ScreenDraw.fillRect(
-        0,
-        0,
-        SW,
-        SH,
-        0xFF74C8E8
-    );
-
-
-    /*
-     * Background
-     */
-
-    ScreenDraw.fillRect(
-        0,
-        150,
-        SW,
-        90,
-        0xFF5FA74E
-    );
-
-
-    /*
-     * Đường
-     */
-
-    ScreenDraw.fillRect(
-        0,
-        170,
-        SW,
-        35,
-        0xFF4B4F54
-    );
-
-
-    ScreenDraw.fillRect(
-        0,
-        187,
-        SW,
-        2,
-        0xFFE0C95A
-    );
-
-
-    /*
-     * Logo
-     */
-
-    ScreenDraw.text8x8(
-        104,
-        48,
-        "CROSSY",
-        0xFFFFFFFF
-    );
-
-    ScreenDraw.text8x8(
-        143,
-        66,
-        "JS",
-        0xFFFFD34D
-    );
-
-
-    /*
-     * Con gà
-     */
-
-    player.x = 0;
-    player.row = 0;
-    player.jump = 0;
-
-    player.draw();
-
-
-    /*
-     * Start button
-     */
-
-    ScreenDraw.fillRect(
-        78,
-        105,
-        164,
-        32,
-        0xFF20252A
-    );
-
-
-    ScreenDraw.text8x8(
-        104,
-        117,
-        "PRESS A",
-        0xFFFFFFFF
-    );
-
-
-    ScreenDraw.text8x8(
-        112,
-        154,
-        "D-PAD MOVE",
-        0xFF18384C
-    );
-
-    ScreenDraw.text8x8(
-        115,
-        205,
-        "BEST " + bestScore,
-        0xFFFFFFFF
-    );
-}
-
-
-/* ============================================================
-   20. PAUSE
-   ============================================================ */
-
-function drawPause() {
-
-    drawWorld();
-
-
-    ScreenDraw.fillRect(
-        55,
-        65,
-        210,
-        105,
-        0xEE20252A
-    );
-
-
-    ScreenDraw.text8x8(
-        128,
-        82,
-        "PAUSED",
-        0xFFFFFFFF
-    );
-
-
-    ScreenDraw.text8x8(
-        103,
-        106,
-        "A RESUME",
-        0xFFFFD34D
-    );
-
-
-    ScreenDraw.text8x8(
-        100,
-        124,
-        "START RESUME",
-        0xFFFFFFFF
-    );
-
-
-    ScreenDraw.text8x8(
-        112,
-        142,
-        "B TITLE",
-        0xFF8ED4E7
-    );
-}
-
-
-/* ============================================================
-   21. GAME OVER
-   ============================================================ */
 
 function drawGameOver() {
+    rect(0, 0, W, H, 0x99000000);
+    rect(66, 69, 188, 90, 0xFFFAFAFA);
 
-    ScreenDraw.fillRect(
-        0,
-        0,
-        SW,
-        SH,
-        0xFF180B0B
-    );
-
-
-    ScreenDraw.text8x8(
-        110,
-        75,
-        "GAME OVER",
-        0xFFFF3333
-    );
-
-
-    ScreenDraw.text8x8(
-        112,
-        105,
-        "SCORE " + score,
-        0xFFFFFFFF
-    );
-
-
-    ScreenDraw.text8x8(
-        112,
-        123,
-        "BEST " + bestScore,
-        0xFFFFD34D
-    );
-
-
-    ScreenDraw.text8x8(
-        112,
-        151,
-        "A RETRY",
-        0xFFFFFFFF
-    );
-
-
-    ScreenDraw.text8x8(
-        112,
-        169,
-        "B TITLE",
-        0xFF8ED4E7
-    );
+    text(105, 83, "GAME OVER", C.red);
+    text(111, 103, "Score: " + score, C.black);
+    text(94, 121, "Best: " + best, C.black);
+    text(76, 142, "Press a direction", C.black);
 }
-
-
-/* ============================================================
-   22. UPDATE
-   ============================================================ */
-
-function update(dt) {
-
-    var input = 0;
-
-
-    try {
-
-        if (
-            typeof getInputState !== "undefined"
-        ) {
-
-            input =
-                getInputState();
-
-        }
-
-    } catch (e) {}
-
-
-    /*
-     * SELECT = thoát
-     */
-
-    if (
-        input &
-        BTN_SELECT
-    ) {
-
-        RUNNING = false;
-
-        return;
-    }
-
-
-    /*
-     * MENU
-     */
-
-    if (
-        state === STATE_MENU
-    ) {
-
-        if (
-            (input & BTN_A) &&
-            !(lastInput & BTN_A)
-        ) {
-
-            resetGame();
-        }
-    }
-
-
-    /*
-     * GAME
-     */
-
-    else if (
-        state === STATE_GAME
-    ) {
-
-        if (
-            (input & BTN_START) &&
-            !(lastInput & BTN_START)
-        ) {
-
-            state =
-                STATE_PAUSE;
-        }
-
-
-        else if (
-            (input & BTN_B) &&
-            !(lastInput & BTN_B)
-        ) {
-
-            state =
-                STATE_MENU;
-        }
-
-
-        else {
-
-            /*
-             * UP
-             */
-
-            if (
-                (input & BTN_UP) &&
-                !(lastInput & BTN_UP)
-            ) {
-
-                movePlayer(0, 1);
-            }
-
-
-            /*
-             * DOWN
-             */
-
-            else if (
-                (input & BTN_DOWN) &&
-                !(lastInput & BTN_DOWN)
-            ) {
-
-                movePlayer(0, -1);
-            }
-
-
-            /*
-             * LEFT
-             */
-
-            else if (
-                (input & BTN_LEFT) &&
-                !(lastInput & BTN_LEFT)
-            ) {
-
-                movePlayer(-1, 0);
-            }
-
-
-            /*
-             * RIGHT
-             */
-
-            else if (
-                (input & BTN_RIGHT) &&
-                !(lastInput & BTN_RIGHT)
-            ) {
-
-                movePlayer(1, 0);
-            }
-        }
-
-
-        if (moveCooldown > 0)
-            moveCooldown -= dt;
-
-
-        if (moveCooldown < 0)
-            moveCooldown = 0;
-
-
-        gameTime += dt;
-
-
-        player.update(dt);
-
-        updateRows(dt);
-
-        checkWorldCollision();
-    }
-
-
-    /*
-     * PAUSE
-     */
-
-    else if (
-        state === STATE_PAUSE
-    ) {
-
-        if (
-            (
-                input &
-                BTN_START
-            ) &&
-            !(
-                lastInput &
-                BTN_START
-            )
-        ) {
-
-            state =
-                STATE_GAME;
-        }
-
-
-        if (
-            (
-                input &
-                BTN_A
-            ) &&
-            !(
-                lastInput &
-                BTN_A
-            )
-        ) {
-
-            state =
-                STATE_GAME;
-        }
-
-
-        if (
-            (
-                input &
-                BTN_B
-            ) &&
-            !(
-                lastInput &
-                BTN_B
-            )
-        ) {
-
-            state =
-                STATE_MENU;
-        }
-    }
-
-
-    /*
-     * GAME OVER
-     */
-
-    else if (
-        state === STATE_OVER
-    ) {
-
-        if (
-            (
-                input &
-                BTN_A
-            ) &&
-            !(
-                lastInput &
-                BTN_A
-            )
-        ) {
-
-            resetGame();
-        }
-
-
-        if (
-            (
-                input &
-                BTN_B
-            ) &&
-            !(
-                lastInput &
-                BTN_B
-            )
-        ) {
-
-            state =
-                STATE_MENU;
-        }
-    }
-
-
-    lastInput =
-        input;
-}
-
-
-/* ============================================================
-   23. RENDER
-   ============================================================ */
 
 function render() {
+    rect(0, 0, W, H, C.grass);
 
-    if (
-        typeof ScreenDraw === "undefined"
-    ) {
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i];
 
-        return;
+        if (row.y + TILE < 0 || row.y > H) continue;
+
+        if (row.type === "grass") {
+            drawGrass(row);
+        } else if (row.type === "road") {
+            drawRoad(row);
+        } else {
+            drawWater(row);
+        }
     }
 
-
-    if (
-        state === STATE_MENU
-    ) {
-
-        drawMenu();
+    if (player.alive) {
+        drawChicken(player.x, player.y);
     }
 
+    drawHUD();
 
-    else if (
-        state === STATE_GAME
-    ) {
-
-        drawWorld();
-    }
-
-
-    else if (
-        state === STATE_PAUSE
-    ) {
-
-        drawPause();
-    }
-
-
-    else if (
-        state === STATE_OVER
-    ) {
-
+    if (gameOver) {
         drawGameOver();
     }
-}
 
-
-/* ============================================================
-   24. GAME LOOP
-   ============================================================ */
-
-var lastTime =
-    Date.now();
-
-
-function gameLoop() {
-
-    if (!RUNNING)
-        return;
-
-
-    var now =
-        Date.now();
-
-
-    var dt =
-        (now - lastTime) /
-        1000;
-
-
-    /*
-     * Chống lag spike
-     */
-
-    if (dt > 0.1)
-        dt = 0.1;
-
-
-    if (dt < 0)
-        dt = 0;
-
-
-    lastTime =
-        now;
-
-
-    update(dt);
-
-    render();
-
-
-    /*
-     * Đẩy frame lên màn hình
-     */
-
-    if (
-        typeof video !== "undefined" &&
-        video.present
-    ) {
-
+    if (typeof video !== "undefined" &&
+        video && typeof video.present === "function") {
         video.present();
-
-    }
-
-    else if (
-        typeof ScreenDraw !== "undefined" &&
-        ScreenDraw.present
-    ) {
-
+    } else if (typeof ScreenDraw.present === "function") {
         ScreenDraw.present();
     }
 }
 
+function gameLoop() {
+    var now = Date.now();
+    var dt = now - lastTime;
+    lastTime = now;
 
-/* ============================================================
-   25. KHỞI TẠO
-   ============================================================ */
-
-generateWorld();
-
-
-/*
- * Dùng đúng cơ chế loop
- * của file mẫu bạn gửi
- */
-
-if (
-    typeof setMainLoop !== "undefined"
-) {
-
-    setMainLoop(
-        gameLoop
-    );
-
+    update(dt);
+    render();
 }
 
-else if (
-    typeof setInterval !== "undefined"
-) {
+resetGame();
 
-    setInterval(
-        gameLoop,
-        33
-    );
+if (typeof setMainLoop === "function") {
+    setMainLoop(gameLoop);
+} else {
+    setInterval(gameLoop, 33);
 }
