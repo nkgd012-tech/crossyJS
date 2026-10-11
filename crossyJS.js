@@ -1,964 +1,1059 @@
+'use strict';
+
 /*
- * crossyJS.js
- * Crossy Road style - mQuickJS
- * 320x240
+ * ============================================================
+ * CROSSY JS
+ * Crossy Road style game cho GB300 / mQuickJS
+ *
+ * Độ phân giải: 320x240
+ *
+ * UP    = đi lên
+ * DOWN  = đi xuống
+ * LEFT  = sang trái
+ * RIGHT = sang phải
+ * A     = bắt đầu / chơi lại
+ * START = pause
+ * B     = về menu
+ * SELECT = thoát game
+ * ============================================================
  */
 
-var W = 320;
-var H = 240;
+
+/* ============================================================
+   1. CẤU HÌNH
+   ============================================================ */
+
+var SW = 320;
+var SH = 240;
+var RUNNING = true;
+
+
+/* ============================================================
+   2. INPUT GB300
+   ============================================================ */
 
 var BTN_B = 1;
+var BTN_Y = 2;
 var BTN_SELECT = 4;
 var BTN_START = 8;
+
 var BTN_UP = 16;
+var BTN_DOWN = 32;
 var BTN_LEFT = 64;
 var BTN_RIGHT = 128;
-var BTN_A = 256;
 
-var gameState = "title";
-var oldKeys = 0;
+var BTN_A = 256;
+var BTN_X = 512;
+var BTN_L = 1024;
+var BTN_R = 2048;
+
+
+/* ============================================================
+   3. TRẠNG THÁI GAME
+   ============================================================ */
+
+var STATE_MENU = 0;
+var STATE_GAME = 1;
+var STATE_PAUSE = 2;
+var STATE_OVER = 3;
+
+var state = STATE_MENU;
 
 var score = 0;
-var best = 0;
+var bestScore = 0;
 
-var playerX = 0;
-var playerRow = 0;
-var playerTargetX = 0;
+var gameTime = 0;
+var moveCooldown = 0;
 
-var jump = 0;
-var moveDelay = 0;
+var lastInput = 0;
 
 var cameraRow = 0;
-var roadTime = 0;
 
-var shake = 0;
-var flash = 0;
+
+/* ============================================================
+   4. PLAYER
+   ============================================================ */
+
+var player = {
+
+    x: 0,
+    targetX: 0,
+
+    row: 0,
+
+    jump: 0,
+
+    jumpTime: 0,
+
+    alive: true,
+
+    update: function(dt) {
+
+        if (this.x < this.targetX)
+            this.x += 7 * dt;
+
+        if (this.x > this.targetX)
+            this.x -= 7 * dt;
+
+        if (Math.abs(this.x - this.targetX) < 0.03)
+            this.x = this.targetX;
+
+        if (this.jump > 0) {
+
+            this.jumpTime += dt;
+
+            if (this.jumpTime >= 0.20) {
+
+                this.jump = 0;
+                this.jumpTime = 0;
+            }
+        }
+    },
+
+    draw: function() {
+
+        var px =
+            160 +
+            this.x * 42;
+
+        var py = 165;
+
+        /*
+         * Nhảy giả 3D
+         */
+
+        if (this.jump > 0) {
+
+            var t =
+                this.jumpTime / 0.20;
+
+            py -=
+                Math.sin(t * Math.PI) * 24;
+        }
+
+        px = px | 0;
+        py = py | 0;
+
+
+        /*
+         * Bóng
+         */
+
+        ScreenDraw.fillRect(
+            px - 11,
+            py + 2,
+            22,
+            5,
+            0x55333333
+        );
+
+
+        /*
+         * Thân
+         */
+
+        ScreenDraw.fillRect(
+            px - 10,
+            py - 20,
+            20,
+            20,
+            0xFFFFD34D
+        );
+
+
+        /*
+         * Mặt 3D phía trên
+         */
+
+        ScreenDraw.fillRect(
+            px - 7,
+            py - 23,
+            14,
+            4,
+            0xFFFFE889
+        );
+
+
+        /*
+         * Mặt bên
+         */
+
+        ScreenDraw.fillRect(
+            px + 7,
+            py - 18,
+            3,
+            17,
+            0xFFD49D18
+        );
+
+
+        /*
+         * Mắt
+         */
+
+        ScreenDraw.fillRect(
+            px - 6,
+            py - 15,
+            4,
+            5,
+            0xFF202020
+        );
+
+        ScreenDraw.fillRect(
+            px + 2,
+            py - 15,
+            4,
+            5,
+            0xFF202020
+        );
+
+
+        /*
+         * Mỏ
+         */
+
+        ScreenDraw.fillRect(
+            px - 2,
+            py - 9,
+            5,
+            3,
+            0xFFFF8C21
+        );
+    }
+};
+
+
+/* ============================================================
+   5. WORLD ROW
+   ============================================================ */
 
 var rows = [];
-var particles = [];
 
 
-/* =========================================================
-   BASIC DRAW
-   ========================================================= */
+function createRow(index) {
 
-function fill(x, y, w, h, c) {
-    try {
-        ScreenDraw.fillRect(
-            Math.floor(x),
-            Math.floor(y),
-            Math.floor(w),
-            Math.floor(h),
-            c
-        );
-    } catch (e) {}
-}
+    var type;
 
-function line(x1, y1, x2, y2, c) {
-    try {
-        ScreenDraw.drawLine(
-            Math.floor(x1),
-            Math.floor(y1),
-            Math.floor(x2),
-            Math.floor(y2),
-            c
-        );
-    } catch (e) {}
-}
+    /*
+     * Cứ vài hàng tạo các loại địa hình khác nhau
+     */
 
-function print(t, x, y, c) {
-    try {
-        if (ScreenDraw.drawText)
-            ScreenDraw.drawText(String(t), Math.floor(x), Math.floor(y), c);
-        else if (ScreenDraw.text8x8)
-            ScreenDraw.text8x8(String(t), Math.floor(x), Math.floor(y), c);
-    } catch (e) {}
-}
+    var randomValue =
+        Math.random();
 
-function clear(c) {
-    try {
-        if (ScreenDraw.clear)
-            ScreenDraw.clear(c);
-        else
-            fill(0, 0, W, H, c);
-    } catch (e) {
-        fill(0, 0, W, H, c);
+    if (index < 2) {
+
+        type = 0;
+
+    } else if (randomValue < 0.45) {
+
+        type = 0;
+
+    } else if (randomValue < 0.75) {
+
+        type = 1;
+
+    } else {
+
+        type = 2;
     }
-}
-
-function present() {
-    try {
-        if (ScreenDraw.present)
-            ScreenDraw.present();
-    } catch (e) {}
-}
 
 
-/* =========================================================
-   UTILS
-   ========================================================= */
+    var row = {
 
-function random(a, b) {
-    return a + Math.random() * (b - a);
-}
+        index: index,
 
-function randomInt(a, b) {
-    return Math.floor(random(a, b + 1));
-}
-
-function clamp(v, a, b) {
-    if (v < a) return a;
-    if (v > b) return b;
-    return v;
-}
-
-function justPressed(keys, button) {
-    return (keys & button) && !(oldKeys & button);
-}
-
-
-/* =========================================================
-   WORLD
-   ========================================================= */
-
-function createRow(type, z) {
-
-    var r = {
         type: type,
-        z: z,
-        speed: 0,
-        objects: [],
-        variant: randomInt(0, 2)
+
+        speed:
+            (0.5 + Math.random() * 0.8),
+
+        direction:
+            Math.random() < 0.5 ? -1 : 1,
+
+        objects: []
     };
 
-    if (type === "road") {
 
-        r.speed = random(0.45, 1.15);
+    /*
+     * ROAD
+     */
 
-        if (Math.random() < 0.5)
-            r.speed *= -1;
+    if (type === 1) {
 
-        var cars = randomInt(1, 3);
+        var amount =
+            1 + Math.floor(
+                Math.random() * 3
+            );
 
-        for (var i = 0; i < cars; i++) {
+        for (var i = 0; i < amount; i++) {
 
-            r.objects.push({
-                x: random(-2.5, 2.5),
-                width: random(0.65, 1.0),
-                type: randomInt(0, 4)
+            row.objects.push({
+
+                x:
+                    -2.8 +
+                    Math.random() * 5.6,
+
+                width:
+                    0.65 +
+                    Math.random() * 0.35,
+
+                color:
+                    Math.floor(
+                        Math.random() * 5
+                    )
             });
         }
     }
 
-    else if (type === "water") {
 
-        r.speed = random(0.25, 0.55);
+    /*
+     * WATER
+     */
 
-        if (Math.random() < 0.5)
-            r.speed *= -1;
+    if (type === 2) {
 
-        var logs = randomInt(1, 3);
+        var logAmount =
+            1 +
+            Math.floor(
+                Math.random() * 3
+            );
 
-        for (var j = 0; j < logs; j++) {
+        for (
+            var j = 0;
+            j < logAmount;
+            j++
+        ) {
 
-            r.objects.push({
-                x: random(-2.5, 2.5),
-                width: random(1.0, 1.8)
+            row.objects.push({
+
+                x:
+                    -2.8 +
+                    Math.random() * 5.6,
+
+                width:
+                    0.9 +
+                    Math.random() * 0.9
             });
         }
     }
 
-    else if (type === "grass") {
 
-        var trees = randomInt(0, 2);
+    /*
+     * GRASS
+     */
 
-        for (var k = 0; k < trees; k++) {
+    if (type === 0) {
 
-            r.objects.push({
-                x: random(-2.5, 2.5)
+        var treeAmount =
+            Math.floor(
+                Math.random() * 3
+            );
+
+        for (
+            var k = 0;
+            k < treeAmount;
+            k++
+        ) {
+
+            row.objects.push({
+
+                x:
+                    -2.8 +
+                    Math.random() * 5.6
             });
         }
     }
 
-    return r;
+
+    return row;
 }
 
+
+/* ============================================================
+   6. TẠO MAP
+   ============================================================ */
 
 function generateWorld() {
 
     rows = [];
 
-    for (var i = -8; i < 40; i++) {
+    for (
+        var i = -8;
+        i < 45;
+        i++
+    ) {
 
-        var type;
-
-        if (i < 3) {
-
-            type = "grass";
-
-        } else {
-
-            var p = Math.random();
-
-            if (p < 0.46)
-                type = "grass";
-            else if (p < 0.78)
-                type = "road";
-            else
-                type = "water";
-        }
-
-        rows.push(createRow(type, i));
+        rows.push(
+            createRow(i)
+        );
     }
 }
 
 
-function getRow(n) {
+/* ============================================================
+   7. LẤY ROW
+   ============================================================ */
 
-    var index = n + 8;
+function getRow(number) {
 
-    if (index < 0 || index >= rows.length)
+    var index =
+        number + 8;
+
+    if (
+        index < 0 ||
+        index >= rows.length
+    ) {
+
         return null;
+    }
 
     return rows[index];
 }
 
 
-/* =========================================================
-   PARTICLES
-   ========================================================= */
+/* ============================================================
+   8. RESET GAME
+   ============================================================ */
 
-function particle(x, y, color) {
-
-    particles.push({
-        x: x,
-        y: y,
-        vx: random(-1.5, 1.5),
-        vy: random(-3, -0.5),
-        life: randomInt(12, 25),
-        color: color
-    });
-}
-
-
-function updateParticles() {
-
-    for (var i = particles.length - 1; i >= 0; i--) {
-
-        var p = particles[i];
-
-        p.x += p.vx;
-        p.y += p.vy;
-
-        p.vy += 0.12;
-
-        p.life--;
-
-        if (p.life <= 0)
-            particles.splice(i, 1);
-    }
-}
-
-
-/* =========================================================
-   START
-   ========================================================= */
-
-function startGame() {
+function resetGame() {
 
     score = 0;
 
-    playerX = 0;
-    playerTargetX = 0;
-    playerRow = 0;
+    gameTime = 0;
 
-    jump = 0;
-    moveDelay = 0;
+    moveCooldown = 0;
 
     cameraRow = 0;
 
-    roadTime = 0;
+    player.x = 0;
+    player.targetX = 0;
+    player.row = 0;
 
-    shake = 0;
-    flash = 0;
+    player.jump = 0;
+    player.jumpTime = 0;
 
-    particles = [];
+    player.alive = true;
 
     generateWorld();
 
-    gameState = "game";
+    state = STATE_GAME;
 }
 
 
-/* =========================================================
-   PLAYER
-   ========================================================= */
+/* ============================================================
+   9. DI CHUYỂN
+   ============================================================ */
 
-function movePlayer(dx, dz) {
+function movePlayer(dx, dy) {
 
-    if (gameState !== "game")
+    if (moveCooldown > 0)
         return;
 
-    if (moveDelay > 0)
+    if (!player.alive)
         return;
+
+
+    /*
+     * Trái / phải
+     */
 
     if (dx !== 0) {
 
-        playerTargetX += dx;
+        player.targetX += dx;
 
-        playerTargetX =
-            clamp(playerTargetX, -2, 2);
+        if (player.targetX < -2)
+            player.targetX = -2;
+
+        if (player.targetX > 2)
+            player.targetX = 2;
     }
 
-    if (dz !== 0) {
 
-        playerRow += dz;
+    /*
+     * Lên / xuống
+     */
 
-        if (playerRow < 0)
-            playerRow = 0;
+    if (dy !== 0) {
 
-        if (playerRow > 30)
-            playerRow = 30;
+        player.row += dy;
 
-        if (dz > 0) {
+        if (player.row < 0)
+            player.row = 0;
+
+        if (player.row > 35)
+            player.row = 35;
+
+
+        /*
+         * Chỉ tăng điểm khi đi lên
+         */
+
+        if (dy > 0) {
 
             score++;
 
-            if (score > best)
-                best = score;
-
-            for (var i = 0; i < 5; i++)
-                particle(160, 155, 0xffffff);
+            if (score > bestScore)
+                bestScore = score;
         }
     }
 
-    jump = 5;
-    moveDelay = 5;
-
-    if (playerRow > cameraRow + 5)
-        cameraRow = playerRow - 5;
-}
-
-
-/* =========================================================
-   COLLISION
-   ========================================================= */
-
-function normalizeX(x) {
-
-    while (x < -3)
-        x += 6;
-
-    while (x > 3)
-        x -= 6;
-
-    return x;
-}
-
-
-function carCollision(row) {
-
-    if (!row)
-        return false;
-
-    if (row.type !== "road")
-        return false;
-
-    for (var i = 0; i < row.objects.length; i++) {
-
-        var car = row.objects[i];
-
-        var x =
-            car.x +
-            row.speed *
-            roadTime *
-            0.004;
-
-        x = normalizeX(x);
-
-        if (
-            Math.abs(x - playerX) <
-            car.width * 0.55 + 0.27
-        ) {
-
-            return true;
-        }
-    }
-
-    return false;
-}
-
-
-function onLog(row) {
-
-    if (!row)
-        return false;
-
-    if (row.type !== "water")
-        return false;
-
-    for (var i = 0; i < row.objects.length; i++) {
-
-        var log = row.objects[i];
-
-        var x =
-            log.x +
-            row.speed *
-            roadTime *
-            0.008;
-
-        x = normalizeX(x);
-
-        if (
-            Math.abs(x - playerX) <
-            log.width * 0.55 + 0.25
-        ) {
-
-            return true;
-        }
-    }
-
-    return false;
-}
-
-
-/* =========================================================
-   GAME OVER
-   ========================================================= */
-
-function gameOver() {
-
-    gameState = "dead";
-
-    shake = 10;
-    flash = 10;
-
-    for (var i = 0; i < 20; i++) {
-
-        particle(
-            160,
-            150,
-            i % 2 ?
-            0xffd34d :
-            0xffffff
-        );
-    }
-}
-
-
-/* =========================================================
-   UPDATE GAME
-   ========================================================= */
-
-function updateGame() {
-
-    if (moveDelay > 0)
-        moveDelay--;
-
-    if (Math.abs(playerTargetX - playerX) > 0.01) {
-
-        playerX +=
-            (playerTargetX - playerX) *
-            0.28;
-    }
-
-    if (jump > 0)
-        jump--;
-
-    roadTime++;
-
-    for (var i = 0; i < rows.length; i++) {
-
-        var r = rows[i];
-
-        if (
-            r.type === "road" ||
-            r.type === "water"
-        ) {
-
-            for (
-                var j = 0;
-                j < r.objects.length;
-                j++
-            ) {
-
-                var o = r.objects[j];
-
-                o.x +=
-                    r.speed *
-                    0.004;
-
-                if (o.x < -3.3)
-                    o.x = 3.3;
-
-                if (o.x > 3.3)
-                    o.x = -3.3;
-            }
-        }
-    }
-
-    var row = getRow(playerRow);
 
     /*
-     * Player is airborne during jump,
-     * so collision is checked after landing.
+     * Animation nhảy
      */
 
-    if (row && jump === 0) {
+    player.jump = 1;
+    player.jumpTime = 0;
+
+    moveCooldown = 0.10;
+
+
+    /*
+     * Camera đi theo player
+     */
+
+    if (
+        player.row >
+        cameraRow + 5
+    ) {
+
+        cameraRow =
+            player.row - 5;
+    }
+}
+
+
+/* ============================================================
+   10. UPDATE XE / LOG
+   ============================================================ */
+
+function updateRows(dt) {
+
+    for (
+        var i = 0;
+        i < rows.length;
+        i++
+    ) {
+
+        var row = rows[i];
 
         if (
-            row.type === "road" &&
-            carCollision(row)
+            row.type !== 1 &&
+            row.type !== 2
         ) {
 
-            gameOver();
+            continue;
         }
 
-        else if (
-            row.type === "water" &&
-            !onLog(row)
+
+        for (
+            var j = 0;
+            j < row.objects.length;
+            j++
         ) {
 
-            gameOver();
+            var object =
+                row.objects[j];
+
+
+            object.x +=
+                row.speed *
+                row.direction *
+                dt;
+
+
+            if (object.x < -3.5)
+                object.x = 3.5;
+
+            if (object.x > 3.5)
+                object.x = -3.5;
+        }
+    }
+}
+
+
+/* ============================================================
+   11. KIỂM TRA XE
+   ============================================================ */
+
+function checkCarCollision(row) {
+
+    if (!row)
+        return false;
+
+    if (row.type !== 1)
+        return false;
+
+
+    for (
+        var i = 0;
+        i < row.objects.length;
+        i++
+    ) {
+
+        var car =
+            row.objects[i];
+
+
+        if (
+            Math.abs(
+                car.x - player.x
+            )
+            <
+            car.width * 0.55 +
+            0.28
+        ) {
+
+            return true;
         }
     }
 
-    updateParticles();
 
-    if (shake > 0)
-        shake--;
-
-    if (flash > 0)
-        flash--;
+    return false;
 }
 
 
-/* =========================================================
-   3D PROJECTION
-   ========================================================= */
+/* ============================================================
+   12. KIỂM TRA LOG
+   ============================================================ */
 
-function projectRow(rowNumber) {
+function checkLog(row) {
 
-    var relative =
-        rowNumber -
-        cameraRow;
+    if (!row)
+        return false;
 
-    var y =
-        156 -
-        relative * 13;
+    if (row.type !== 2)
+        return true;
 
-    var scale =
-        1 -
-        relative * 0.055;
 
-    scale =
-        clamp(scale, 0.42, 1.35);
+    for (
+        var i = 0;
+        i < row.objects.length;
+        i++
+    ) {
 
-    return {
-        y: y,
-        scale: scale
-    };
+        var log =
+            row.objects[i];
+
+
+        if (
+            Math.abs(
+                log.x - player.x
+            )
+            <
+            log.width * 0.55 +
+            0.20
+        ) {
+
+            return true;
+        }
+    }
+
+
+    return false;
 }
 
 
-/* =========================================================
-   TREE
-   ========================================================= */
+/* ============================================================
+   13. GAME OVER
+   ============================================================ */
 
-function drawTree(x, y, s) {
+function killPlayer() {
 
-    /* shadow */
+    player.alive = false;
 
-    fill(
-        x - s * 0.55,
-        y + 1,
-        s * 1.1,
-        s * 0.18,
-        0x315a35
+    state = STATE_OVER;
+}
+
+
+/* ============================================================
+   14. COLLISION UPDATE
+   ============================================================ */
+
+function checkWorldCollision() {
+
+    /*
+     * Khi đang nhảy không kiểm tra
+     */
+
+    if (player.jump > 0)
+        return;
+
+
+    var row =
+        getRow(player.row);
+
+
+    if (!row)
+        return;
+
+
+    /*
+     * Đường
+     */
+
+    if (row.type === 1) {
+
+        if (
+            checkCarCollision(row)
+        ) {
+
+            killPlayer();
+
+            return;
+        }
+    }
+
+
+    /*
+     * Nước
+     */
+
+    if (row.type === 2) {
+
+        if (
+            !checkLog(row)
+        ) {
+
+            killPlayer();
+
+            return;
+        }
+    }
+}
+
+
+/* ============================================================
+   15. VẼ CÂY
+   ============================================================ */
+
+function drawTree(x, y, scale) {
+
+    var s =
+        (scale * 15) | 0;
+
+
+    /*
+     * Bóng
+     */
+
+    ScreenDraw.fillRect(
+        x - s,
+        y,
+        s * 2,
+        4,
+        0x55333333
     );
 
-    /* trunk */
 
-    fill(
-        x - s * 0.12,
-        y - s * 0.55,
-        s * 0.24,
-        s * 0.65,
-        0x7a4c29
-    );
+    /*
+     * Thân
+     */
 
-    /* foliage */
-
-    fill(
-        x - s * 0.5,
-        y - s * 1.1,
+    ScreenDraw.fillRect(
+        x - 3,
+        y - s,
+        6,
         s,
-        s * 0.7,
-        0x238347
+        0xFF7B4A27
     );
 
-    fill(
-        x - s * 0.36,
-        y - s * 1.35,
-        s * 0.72,
-        s * 0.55,
-        0x35a052
+
+    /*
+     * Tán cây
+     */
+
+    ScreenDraw.fillRect(
+        x - s,
+        y - s * 2,
+        s * 2,
+        s,
+        0xFF218447
     );
 
-    fill(
-        x - s * 0.18,
-        y - s * 1.55,
-        s * 0.36,
-        s * 0.35,
-        0x4fbd5b
+    ScreenDraw.fillRect(
+        x - s + 4,
+        y - s * 2 - 5,
+        s * 2 - 8,
+        8,
+        0xFF36A653
+    );
+
+    ScreenDraw.fillRect(
+        x - 6,
+        y - s * 2 - 10,
+        12,
+        7,
+        0xFF55BB5E
     );
 }
 
 
-/* =========================================================
-   CAR
-   ========================================================= */
+/* ============================================================
+   16. VẼ XE
+   ============================================================ */
 
-function drawCar(x, y, s, color) {
+function drawCar(x, y, scale, color) {
 
-    /* shadow */
+    var s =
+        (scale * 16) | 0;
 
-    fill(
-        x - s * 0.75,
-        y + s * 0.10,
-        s * 1.5,
-        s * 0.22,
-        0x252525
+
+    /*
+     * Bóng
+     */
+
+    ScreenDraw.fillRect(
+        x - s,
+        y,
+        s * 2,
+        4,
+        0x55333333
     );
 
-    /* wheels */
 
-    fill(
-        x - s * 0.75,
-        y - s * 0.02,
-        s * 0.28,
-        s * 0.32,
-        0x111111
+    /*
+     * Bánh
+     */
+
+    ScreenDraw.fillRect(
+        x - s,
+        y - 5,
+        6,
+        9,
+        0xFF151515
     );
 
-    fill(
-        x + s * 0.47,
-        y - s * 0.02,
-        s * 0.28,
-        s * 0.32,
-        0x111111
+    ScreenDraw.fillRect(
+        x + s - 6,
+        y - 5,
+        6,
+        9,
+        0xFF151515
     );
 
-    /* body */
 
-    fill(
-        x - s * 0.65,
-        y - s * 0.35,
-        s * 1.3,
-        s * 0.48,
+    /*
+     * Thân xe
+     */
+
+    ScreenDraw.fillRect(
+        x - s,
+        y - 15,
+        s * 2,
+        12,
         color
     );
 
-    /* cabin */
 
-    fill(
-        x - s * 0.42,
-        y - s * 0.68,
-        s * 0.84,
-        s * 0.40,
+    /*
+     * Cabin
+     */
+
+    ScreenDraw.fillRect(
+        x - s + 5,
+        y - 21,
+        s * 2 - 10,
+        8,
         color
     );
 
-    /* windows */
 
-    fill(
-        x - s * 0.30,
-        y - s * 0.60,
-        s * 0.25,
-        s * 0.20,
-        0x8dd4e8
+    /*
+     * Kính
+     */
+
+    ScreenDraw.fillRect(
+        x - s + 8,
+        y - 19,
+        7,
+        5,
+        0xFF8ED4E7
     );
 
-    fill(
-        x + s * 0.05,
-        y - s * 0.60,
-        s * 0.25,
-        s * 0.20,
-        0x8dd4e8
+    ScreenDraw.fillRect(
+        x + 1,
+        y - 19,
+        7,
+        5,
+        0xFF8ED4E7
     );
 
-    /* lights */
 
-    fill(
-        x - s * 0.62,
-        y - s * 0.22,
-        s * 0.12,
-        s * 0.12,
-        0xfff0a0
+    /*
+     * Đèn
+     */
+
+    ScreenDraw.fillRect(
+        x - s,
+        y - 12,
+        4,
+        4,
+        0xFFFFEE88
     );
 
-    fill(
-        x + s * 0.50,
-        y - s * 0.22,
-        s * 0.12,
-        s * 0.12,
-        0xff3b30
-    );
-}
-
-
-/* =========================================================
-   LOG
-   ========================================================= */
-
-function drawLog(x, y, s) {
-
-    fill(
-        x - s * 0.85,
-        y - s * 0.16,
-        s * 1.7,
-        s * 0.32,
-        0x784722
-    );
-
-    fill(
-        x - s * 0.70,
-        y - s * 0.13,
-        s * 1.4,
-        s * 0.15,
-        0x9d6333
-    );
-
-    fill(
-        x - s * 0.86,
-        y - s * 0.17,
-        s * 0.16,
-        s * 0.34,
-        0xb77a43
-    );
-
-    fill(
-        x + s * 0.70,
-        y - s * 0.17,
-        s * 0.16,
-        s * 0.34,
-        0xb77a43
+    ScreenDraw.fillRect(
+        x + s - 4,
+        y - 12,
+        4,
+        4,
+        0xFFFF4444
     );
 }
 
 
-/* =========================================================
-   PLAYER - FAKE 3D
-   ========================================================= */
+/* ============================================================
+   17. VẼ KHÚC GỖ
+   ============================================================ */
 
-function drawPlayer() {
+function drawLog(x, y, scale) {
 
-    var x =
-        160 +
-        playerX * 42;
+    var s =
+        (scale * 22) | 0;
 
-    var y = 154;
 
-    if (jump > 0) {
-
-        var t =
-            (5 - jump) / 5;
-
-        y -=
-            Math.sin(t * Math.PI) *
-            22;
-    }
-
-    var s = 18;
-
-    /* shadow */
-
-    fill(
-        x - s * 0.55,
-        y + 2,
-        s * 1.1,
-        s * 0.2,
-        0x333333
+    ScreenDraw.fillRect(
+        x - s,
+        y - 6,
+        s * 2,
+        12,
+        0xFF754421
     );
 
-    /* body */
 
-    fill(
-        x - s * 0.48,
-        y - s * 0.60,
-        s * 0.96,
-        s * 0.78,
-        0xf2c94c
+    ScreenDraw.fillRect(
+        x - s + 3,
+        y - 4,
+        s * 2 - 6,
+        4,
+        0xFFA96938
     );
 
-    /* 3D top */
 
-    line(
-        x - s * 0.48,
-        y - s * 0.60,
-        x,
-        y - s * 0.88,
-        0xffe17b
+    /*
+     * Đầu gỗ
+     */
+
+    ScreenDraw.fillRect(
+        x - s,
+        y - 5,
+        5,
+        10,
+        0xFFB87B46
     );
 
-    line(
-        x,
-        y - s * 0.88,
-        x + s * 0.48,
-        y - s * 0.60,
-        0xffe17b
-    );
-
-    line(
-        x - s * 0.48,
-        y - s * 0.60,
-        x,
-        y - s * 0.40,
-        0xd5a51c
-    );
-
-    line(
-        x + s * 0.48,
-        y - s * 0.60,
-        x,
-        y - s * 0.40,
-        0xd5a51c
-    );
-
-    /* eyes */
-
-    fill(
-        x - s * 0.24,
-        y - s * 0.44,
-        s * 0.11,
-        s * 0.11,
-        0x202020
-    );
-
-    fill(
-        x + s * 0.13,
-        y - s * 0.44,
-        s * 0.11,
-        s * 0.11,
-        0x202020
-    );
-
-    /* beak */
-
-    fill(
-        x - s * 0.10,
-        y - s * 0.25,
-        s * 0.20,
-        s * 0.10,
-        0xf28c28
+    ScreenDraw.fillRect(
+        x + s - 5,
+        y - 5,
+        5,
+        10,
+        0xFFB87B46
     );
 }
 
 
-/* =========================================================
-   WORLD DRAW
-   ========================================================= */
+/* ============================================================
+   18. VẼ WORLD
+   ============================================================ */
 
 function drawWorld() {
 
-    clear(0x78c8e8);
-
     /*
-     * SKY
+     * Bầu trời
      */
 
-    fill(
+    ScreenDraw.fillRect(
         0,
         0,
-        W,
-        90,
-        0x72c4e7
+        SW,
+        100,
+        0xFF74C8E8
     );
 
+
     /*
-     * DISTANT HILLS
+     * Núi xa
      */
 
-    for (var h = 0; h < 5; h++) {
-
-        var hx =
-            h * 80 -
-            35;
-
-        line(
-            hx,
-            94,
-            hx + 40,
-            65,
-            0x6cad70
-        );
-
-        line(
-            hx + 40,
-            65,
-            hx + 85,
-            94,
-            0x6cad70
-        );
-    }
+    ScreenDraw.fillRect(
+        0,
+        90,
+        SW,
+        25,
+        0xFF72AC70
+    );
 
 
     /*
-     * WORLD
+     * Các row
      */
 
     for (
-        var rowNumber = 32;
-        rowNumber >= -5;
-        rowNumber--
+        var number = 38;
+        number >= -8;
+        number--
     ) {
 
         var row =
-            getRow(rowNumber);
+            getRow(number);
 
         if (!row)
             continue;
 
-        var projection =
-            projectRow(rowNumber);
+
+        var relative =
+            number - cameraRow;
+
 
         var y =
-            projection.y;
+            166 -
+            relative * 13;
+
 
         var scale =
-            projection.scale;
+            1 -
+            relative * 0.055;
+
+
+        if (scale < 0.45)
+            scale = 0.45;
+
+        if (scale > 1.35)
+            scale = 1.35;
 
 
         /*
          * GRASS
          */
 
-        if (row.type === "grass") {
+        if (row.type === 0) {
 
-            fill(
+            ScreenDraw.fillRect(
                 0,
                 y - 8,
-                W,
+                SW,
                 17,
-                row.variant === 0 ?
-                0x63ad4e :
-                0x5aa347
+                0xFF5FA74E
             );
 
-            /* grass strips */
+
+            /*
+             * sọc cỏ
+             */
 
             for (
                 var gx = 0;
-                gx < W;
-                gx += 24
+                gx < SW;
+                gx += 25
             ) {
 
-                line(
+                ScreenDraw.fillRect(
                     gx,
-                    y + 5,
-                    gx + 5,
-                    y + 2,
-                    0x77bd5a
+                    y + 3,
+                    8,
+                    2,
+                    0xFF73B85A
                 );
             }
         }
@@ -968,47 +1063,54 @@ function drawWorld() {
          * ROAD
          */
 
-        else if (row.type === "road") {
+        if (row.type === 1) {
 
-            fill(
+            ScreenDraw.fillRect(
                 0,
                 y - 8,
-                W,
+                SW,
                 17,
-                0x4d5055
+                0xFF4B4F54
             );
 
-            line(
+
+            /*
+             * Mép đường
+             */
+
+            ScreenDraw.fillRect(
                 0,
                 y - 8,
-                W,
-                y - 8,
-                0x34373b
+                SW,
+                2,
+                0xFF303337
             );
 
-            line(
+            ScreenDraw.fillRect(
                 0,
-                y + 8,
-                W,
-                y + 8,
-                0x34373b
+                y + 6,
+                SW,
+                2,
+                0xFF303337
             );
+
+
+            /*
+             * Vạch đường
+             */
 
             for (
                 var rx = -30;
-                rx < 350;
+                rx < SW + 30;
                 rx += 42
             ) {
 
-                var offset =
-                    (roadTime * 0.5) % 42;
-
-                fill(
-                    rx + offset,
+                ScreenDraw.fillRect(
+                    rx,
                     y - 1,
                     22,
                     2,
-                    0xd8c76b
+                    0xFFE0C95A
                 );
             }
         }
@@ -1018,39 +1120,41 @@ function drawWorld() {
          * WATER
          */
 
-        else if (row.type === "water") {
+        if (row.type === 2) {
 
-            fill(
+            ScreenDraw.fillRect(
                 0,
                 y - 8,
-                W,
+                SW,
                 17,
-                0x318db7
+                0xFF318DB7
             );
 
+
+            /*
+             * Sóng
+             */
+
             for (
-                var wx = -20;
-                wx < 340;
-                wx += 32
+                var wx = 0;
+                wx < SW;
+                wx += 30
             ) {
 
-                var waterOffset =
-                    (roadTime * 0.3) % 32;
-
-                line(
-                    wx + waterOffset,
-                    y - 3,
-                    wx + 13 + waterOffset,
-                    y - 3,
-                    0x61c5df
+                ScreenDraw.fillRect(
+                    wx,
+                    y - 4,
+                    12,
+                    2,
+                    0xFF5DC4DF
                 );
 
-                line(
-                    wx + 8 + waterOffset,
-                    y + 4,
-                    wx + 23 + waterOffset,
-                    y + 4,
-                    0x54b8d5
+                ScreenDraw.fillRect(
+                    wx + 10,
+                    y + 3,
+                    13,
+                    2,
+                    0xFF4EB5D2
                 );
             }
         }
@@ -1061,57 +1165,62 @@ function drawWorld() {
          */
 
         for (
-            var o = 0;
-            o < row.objects.length;
-            o++
+            var j = 0;
+            j < row.objects.length;
+            j++
         ) {
 
             var obj =
-                row.objects[o];
+                row.objects[j];
+
 
             var ox =
-                160 +
+                (160 +
                 obj.x *
                 42 *
-                scale;
+                scale) | 0;
 
-            if (row.type === "road") {
 
-                var colors = [
-                    0xe34b45,
-                    0xf2c94c,
-                    0x4d8fe8,
-                    0xe27d32,
-                    0xd95aa5
-                ];
-
-                drawCar(
-                    ox,
-                    y,
-                    scale * 16,
-                    colors[obj.type]
-                );
-            }
-
-            else if (
-                row.type === "water"
-            ) {
-
-                drawLog(
-                    ox,
-                    y,
-                    scale * 22
-                );
-            }
-
-            else if (
-                row.type === "grass"
-            ) {
+            if (row.type === 0) {
 
                 drawTree(
                     ox,
                     y,
-                    scale * 15
+                    scale
+                );
+            }
+
+
+            if (row.type === 1) {
+
+                var carColors = [
+
+                    0xFFE34B45,
+                    0xFFF2C94C,
+                    0xFF4D8FE8,
+                    0xFFE27D32,
+                    0xFFD95AA5
+
+                ];
+
+
+                drawCar(
+                    ox,
+                    y,
+                    scale,
+                    carColors[
+                        obj.color
+                    ]
+                );
+            }
+
+
+            if (row.type === 2) {
+
+                drawLog(
+                    ox,
+                    y,
+                    scale
                 );
             }
         }
@@ -1119,529 +1228,667 @@ function drawWorld() {
 
 
     /*
-     * PLAYER
+     * Player
      */
 
-    drawPlayer();
-
-
-    /*
-     * PARTICLES
-     */
-
-    for (
-        var p = 0;
-        p < particles.length;
-        p++
-    ) {
-
-        var part =
-            particles[p];
-
-        fill(
-            part.x,
-            part.y,
-            3,
-            3,
-            part.color
-        );
-    }
+    player.draw();
 
 
     /*
      * HUD
      */
 
-    fill(
+    ScreenDraw.fillRect(
         7,
         7,
-        95,
-        27,
-        0x20252a
+        105,
+        28,
+        0xCC20252A
     );
 
-    print(
-        "SCORE " + score,
+
+    ScreenDraw.text8x8(
         13,
         12,
-        0xffffff
+        "SCORE " + score,
+        0xFFFFFFFF
     );
 
-    print(
-        "BEST  " + best,
+    ScreenDraw.text8x8(
         13,
         22,
-        0xf6d365
+        "BEST " + bestScore,
+        0xFFFFD34D
     );
-
-
-    /*
-     * PAUSE BUTTON
-     */
-
-    fill(
-        267,
-        7,
-        46,
-        27,
-        0x20252a
-    );
-
-    print(
-        "II",
-        285,
-        13,
-        0xffffff
-    );
-
-
-    /*
-     * SCREEN SHAKE
-     */
-
-    if (shake > 0) {
-
-        line(
-            0,
-            0,
-            W,
-            0,
-            0xffffff
-        );
-
-        line(
-            0,
-            H - 1,
-            W,
-            H - 1,
-            0xffffff
-        );
-    }
-
-    if (flash > 0) {
-
-        line(
-            0,
-            0,
-            W,
-            0,
-            0xffffff
-        );
-    }
 }
 
 
-/* =========================================================
-   TITLE
-   ========================================================= */
+/* ============================================================
+   19. MENU
+   ============================================================ */
 
-function drawTitle() {
+function drawMenu() {
 
-    clear(0x78c8e8);
-
-    /*
-     * hills
-     */
-
-    line(
+    ScreenDraw.fillRect(
         0,
-        145,
-        55,
-        105,
-        0x6cad70
-    );
-
-    line(
-        55,
-        105,
-        120,
-        145,
-        0x6cad70
-    );
-
-    line(
-        100,
-        145,
-        170,
-        95,
-        0x6cad70
-    );
-
-    line(
-        170,
-        95,
-        245,
-        145,
-        0x6cad70
+        0,
+        SW,
+        SH,
+        0xFF74C8E8
     );
 
 
     /*
-     * logo blocks
+     * Background
      */
 
-    drawPlayer();
+    ScreenDraw.fillRect(
+        0,
+        150,
+        SW,
+        90,
+        0xFF5FA74E
+    );
 
-    print(
+
+    /*
+     * Đường
+     */
+
+    ScreenDraw.fillRect(
+        0,
+        170,
+        SW,
+        35,
+        0xFF4B4F54
+    );
+
+
+    ScreenDraw.fillRect(
+        0,
+        187,
+        SW,
+        2,
+        0xFFE0C95A
+    );
+
+
+    /*
+     * Logo
+     */
+
+    ScreenDraw.text8x8(
+        104,
+        48,
         "CROSSY",
-        93,
-        43,
-        0xffffff
+        0xFFFFFFFF
     );
 
-    print(
+    ScreenDraw.text8x8(
+        143,
+        66,
         "JS",
-        145,
-        67,
-        0xf6d365
+        0xFFFFD34D
     );
 
 
     /*
-     * start button
+     * Con gà
      */
 
-    fill(
+    player.x = 0;
+    player.row = 0;
+    player.jump = 0;
+
+    player.draw();
+
+
+    /*
+     * Start button
+     */
+
+    ScreenDraw.fillRect(
         78,
         105,
         164,
-        37,
-        0x20252a
+        32,
+        0xFF20252A
     );
 
-    print(
-        "PRESS A TO START",
-        100,
+
+    ScreenDraw.text8x8(
+        104,
         117,
-        0xffffff
+        "PRESS A",
+        0xFFFFFFFF
     );
 
 
-    print(
-        "D-PAD  MOVE",
-        105,
-        168,
-        0x18384c
+    ScreenDraw.text8x8(
+        112,
+        154,
+        "D-PAD MOVE",
+        0xFF18384C
     );
 
-    print(
-        "START  PAUSE",
-        105,
-        181,
-        0x18384c
-    );
-
-    print(
-        "BEST " + best,
-        132,
+    ScreenDraw.text8x8(
+        115,
         205,
-        0xffffff
-    );
-
-
-    fill(
-        0,
-        232,
-        W,
-        8,
-        0x2c6b3d
+        "BEST " + bestScore,
+        0xFFFFFFFF
     );
 }
 
 
-/* =========================================================
-   PAUSE
-   ========================================================= */
+/* ============================================================
+   20. PAUSE
+   ============================================================ */
 
 function drawPause() {
 
-    fill(
-        58,
-        64,
-        204,
-        112,
-        0x20252a
-    );
+    drawWorld();
 
-    print(
-        "PAUSED",
-        125,
-        81,
-        0xffffff
-    );
 
-    print(
-        "A  RESUME",
-        108,
+    ScreenDraw.fillRect(
+        55,
+        65,
+        210,
         105,
-        0xf6d365
+        0xEE20252A
     );
 
-    print(
-        "START  RESUME",
-        96,
-        122,
-        0xffffff
+
+    ScreenDraw.text8x8(
+        128,
+        82,
+        "PAUSED",
+        0xFFFFFFFF
     );
 
-    print(
-        "B  TITLE",
+
+    ScreenDraw.text8x8(
+        103,
+        106,
+        "A RESUME",
+        0xFFFFD34D
+    );
+
+
+    ScreenDraw.text8x8(
+        100,
+        124,
+        "START RESUME",
+        0xFFFFFFFF
+    );
+
+
+    ScreenDraw.text8x8(
         112,
-        140,
-        0x9ed8ef
+        142,
+        "B TITLE",
+        0xFF8ED4E7
     );
 }
 
 
-/* =========================================================
-   GAME OVER
-   ========================================================= */
+/* ============================================================
+   21. GAME OVER
+   ============================================================ */
 
 function drawGameOver() {
 
-    fill(
-        47,
-        55,
-        226,
-        130,
-        0x20252a
+    ScreenDraw.fillRect(
+        0,
+        0,
+        SW,
+        SH,
+        0xFF180B0B
     );
 
-    print(
+
+    ScreenDraw.text8x8(
+        110,
+        75,
         "GAME OVER",
-        106,
-        73,
-        0xe34b45
+        0xFFFF3333
     );
 
-    print(
-        "SCORE  " + score,
+
+    ScreenDraw.text8x8(
         112,
-        98,
-        0xffffff
+        105,
+        "SCORE " + score,
+        0xFFFFFFFF
     );
 
-    print(
-        "BEST   " + best,
+
+    ScreenDraw.text8x8(
         112,
-        115,
-        0xf6d365
+        123,
+        "BEST " + bestScore,
+        0xFFFFD34D
     );
 
-    print(
-        "A  RETRY",
-        116,
-        140,
-        0xffffff
+
+    ScreenDraw.text8x8(
+        112,
+        151,
+        "A RETRY",
+        0xFFFFFFFF
     );
 
-    print(
-        "B  TITLE",
-        116,
-        158,
-        0x9ed8ef
+
+    ScreenDraw.text8x8(
+        112,
+        169,
+        "B TITLE",
+        0xFF8ED4E7
     );
 }
 
 
-/* =========================================================
-   MAIN UPDATE
-   ========================================================= */
+/* ============================================================
+   22. UPDATE
+   ============================================================ */
 
-function update(keys) {
+function update(dt) {
 
-    if (gameState === "title") {
-
-        if (
-            justPressed(keys, BTN_A) ||
-            justPressed(keys, BTN_START)
-        ) {
-
-            startGame();
-        }
-    }
-
-
-    else if (gameState === "game") {
-
-        if (
-            justPressed(keys, BTN_START)
-        ) {
-
-            gameState = "pause";
-        }
-
-        else if (
-            justPressed(keys, BTN_B)
-        ) {
-
-            gameState = "title";
-        }
-
-        else if (
-            justPressed(keys, BTN_UP)
-        ) {
-
-            movePlayer(0, 1);
-        }
-
-        else if (
-            justPressed(keys, BTN_DOWN)
-        ) {
-
-            movePlayer(0, -1);
-        }
-
-        else if (
-            justPressed(keys, BTN_LEFT)
-        ) {
-
-            movePlayer(-1, 0);
-        }
-
-        else if (
-            justPressed(keys, BTN_RIGHT)
-        ) {
-
-            movePlayer(1, 0);
-        }
-
-        updateGame();
-    }
-
-
-    else if (gameState === "pause") {
-
-        if (
-            justPressed(keys, BTN_A) ||
-            justPressed(keys, BTN_START)
-        ) {
-
-            gameState = "game";
-        }
-
-        else if (
-            justPressed(keys, BTN_B)
-        ) {
-
-            gameState = "title";
-        }
-    }
-
-
-    else if (gameState === "dead") {
-
-        updateParticles();
-
-        if (
-            justPressed(keys, BTN_A)
-        ) {
-
-            startGame();
-        }
-
-        else if (
-            justPressed(keys, BTN_B)
-        ) {
-
-            gameState = "title";
-        }
-    }
-
-    oldKeys = keys;
-
-    draw();
-}
-
-
-/* =========================================================
-   INPUT
-   ========================================================= */
-
-function getKeys() {
-
-    try {
-
-        if (
-            typeof getInputState === "function"
-        ) {
-
-            return getInputState() || 0;
-        }
-
-    } catch (e) {}
+    var input = 0;
 
 
     try {
 
         if (
-            typeof Input !== "undefined"
+            typeof getInputState !== "undefined"
         ) {
 
-            if (Input.getKeys)
-                return Input.getKeys() || 0;
+            input =
+                getInputState();
 
-            if (Input.read)
-                return Input.read() || 0;
         }
 
     } catch (e) {}
 
-    return 0;
-}
 
-
-/* =========================================================
-   MAIN LOOP
-   ========================================================= */
-
-function tick() {
-
-    update(
-        getKeys()
-    );
-}
-
-
-generateWorld();
-
-
-try {
+    /*
+     * SELECT = thoát
+     */
 
     if (
-        typeof setMainLoop === "function"
+        input &
+        BTN_SELECT
     ) {
 
-        setMainLoop(tick);
+        RUNNING = false;
+
+        return;
+    }
+
+
+    /*
+     * MENU
+     */
+
+    if (
+        state === STATE_MENU
+    ) {
+
+        if (
+            (input & BTN_A) &&
+            !(lastInput & BTN_A)
+        ) {
+
+            resetGame();
+        }
+    }
+
+
+    /*
+     * GAME
+     */
+
+    else if (
+        state === STATE_GAME
+    ) {
+
+        if (
+            (input & BTN_START) &&
+            !(lastInput & BTN_START)
+        ) {
+
+            state =
+                STATE_PAUSE;
+        }
+
+
+        else if (
+            (input & BTN_B) &&
+            !(lastInput & BTN_B)
+        ) {
+
+            state =
+                STATE_MENU;
+        }
+
+
+        else {
+
+            /*
+             * UP
+             */
+
+            if (
+                (input & BTN_UP) &&
+                !(lastInput & BTN_UP)
+            ) {
+
+                movePlayer(0, 1);
+            }
+
+
+            /*
+             * DOWN
+             */
+
+            else if (
+                (input & BTN_DOWN) &&
+                !(lastInput & BTN_DOWN)
+            ) {
+
+                movePlayer(0, -1);
+            }
+
+
+            /*
+             * LEFT
+             */
+
+            else if (
+                (input & BTN_LEFT) &&
+                !(lastInput & BTN_LEFT)
+            ) {
+
+                movePlayer(-1, 0);
+            }
+
+
+            /*
+             * RIGHT
+             */
+
+            else if (
+                (input & BTN_RIGHT) &&
+                !(lastInput & BTN_RIGHT)
+            ) {
+
+                movePlayer(1, 0);
+            }
+        }
+
+
+        if (moveCooldown > 0)
+            moveCooldown -= dt;
+
+
+        if (moveCooldown < 0)
+            moveCooldown = 0;
+
+
+        gameTime += dt;
+
+
+        player.update(dt);
+
+        updateRows(dt);
+
+        checkWorldCollision();
+    }
+
+
+    /*
+     * PAUSE
+     */
+
+    else if (
+        state === STATE_PAUSE
+    ) {
+
+        if (
+            (
+                input &
+                BTN_START
+            ) &&
+            !(
+                lastInput &
+                BTN_START
+            )
+        ) {
+
+            state =
+                STATE_GAME;
+        }
+
+
+        if (
+            (
+                input &
+                BTN_A
+            ) &&
+            !(
+                lastInput &
+                BTN_A
+            )
+        ) {
+
+            state =
+                STATE_GAME;
+        }
+
+
+        if (
+            (
+                input &
+                BTN_B
+            ) &&
+            !(
+                lastInput &
+                BTN_B
+            )
+        ) {
+
+            state =
+                STATE_MENU;
+        }
+    }
+
+
+    /*
+     * GAME OVER
+     */
+
+    else if (
+        state === STATE_OVER
+    ) {
+
+        if (
+            (
+                input &
+                BTN_A
+            ) &&
+            !(
+                lastInput &
+                BTN_A
+            )
+        ) {
+
+            resetGame();
+        }
+
+
+        if (
+            (
+                input &
+                BTN_B
+            ) &&
+            !(
+                lastInput &
+                BTN_B
+            )
+        ) {
+
+            state =
+                STATE_MENU;
+        }
+    }
+
+
+    lastInput =
+        input;
+}
+
+
+/* ============================================================
+   23. RENDER
+   ============================================================ */
+
+function render() {
+
+    if (
+        typeof ScreenDraw === "undefined"
+    ) {
+
+        return;
+    }
+
+
+    if (
+        state === STATE_MENU
+    ) {
+
+        drawMenu();
+    }
+
+
+    else if (
+        state === STATE_GAME
+    ) {
+
+        drawWorld();
+    }
+
+
+    else if (
+        state === STATE_PAUSE
+    ) {
+
+        drawPause();
+    }
+
+
+    else if (
+        state === STATE_OVER
+    ) {
+
+        drawGameOver();
+    }
+}
+
+
+/* ============================================================
+   24. GAME LOOP
+   ============================================================ */
+
+var lastTime =
+    Date.now();
+
+
+function gameLoop() {
+
+    if (!RUNNING)
+        return;
+
+
+    var now =
+        Date.now();
+
+
+    var dt =
+        (now - lastTime) /
+        1000;
+
+
+    /*
+     * Chống lag spike
+     */
+
+    if (dt > 0.1)
+        dt = 0.1;
+
+
+    if (dt < 0)
+        dt = 0;
+
+
+    lastTime =
+        now;
+
+
+    update(dt);
+
+    render();
+
+
+    /*
+     * Đẩy frame lên màn hình
+     */
+
+    if (
+        typeof video !== "undefined" &&
+        video.present
+    ) {
+
+        video.present();
 
     }
 
     else if (
-        typeof setInterval === "function"
+        typeof ScreenDraw !== "undefined" &&
+        ScreenDraw.present
     ) {
 
-        setInterval(
-            tick,
-            33
-        );
-    }
-
-}
-
-catch (e) {
-
-    if (
-        typeof setInterval === "function"
-    ) {
-
-        setInterval(
-            tick,
-            33
-        );
+        ScreenDraw.present();
     }
 }
 
 
-/* first frame */
+/* ============================================================
+   25. KHỞI TẠO
+   ============================================================ */
 
-draw();
+generateWorld();
+
+
+/*
+ * Dùng đúng cơ chế loop
+ * của file mẫu bạn gửi
+ */
+
+if (
+    typeof setMainLoop !== "undefined"
+) {
+
+    setMainLoop(
+        gameLoop
+    );
+
+}
+
+else if (
+    typeof setInterval !== "undefined"
+) {
+
+    setInterval(
+        gameLoop,
+        33
+    );
+}
