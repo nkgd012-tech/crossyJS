@@ -1,4 +1,4 @@
-# crossyJS for gb300/sf2000
+# crossyJS for gb300 ( may run on sf2000) 
 a weird `crossy road` game for java scripts,
 use `MquickJS` made by `synaps33` to play ( only for FrogUI )
 
